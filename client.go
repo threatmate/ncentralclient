@@ -28,9 +28,8 @@ type Client struct {
 
 	// apiKey is the user API token that Authenticate exchanged for the access
 	// token. It is kept so the access token can be renewed: N-central honours
-	// an access token for an hour by default (less where the server is set
-	// lower), and a client that outlives it would otherwise be refused on
-	// every call from then on.
+	// an access token for a limited time, an hour by default, and a client
+	// that outlives it would otherwise be refused on every call from then on.
 	apiKey string
 	// renewAt is when Do stops presenting the access token and authenticates
 	// again. Zero means the server did not say when the token expires.
@@ -99,11 +98,16 @@ func (c *Client) Do(ctx context.Context, method string, path string, input any, 
 // renewAccessTokenIfDue authenticates again with the API key once the access
 // token is due for renewal.
 //
-// This re-runs the authenticate exchange rather than calling /api/auth/refresh.
-// The API key outlives any access token, and it is the exchange the client
-// already depends on, so renewing needs nothing the first authentication did
-// not. Concurrent callers that find the token due each renew it; every token
-// they are given is valid, so whichever is stored last is used.
+// This re-runs the authenticate exchange rather than calling /api/auth/refresh,
+// so renewing needs nothing the first authentication did not: the same API key
+// and the same exchange.
+//
+// Renewals are not serialized. Callers that find the token due at the same
+// moment each renew it, and the last to finish wins, failure included: a
+// failed renewal clears the token, and if it finishes after one that succeeded
+// (which moved the next renewal out by the token's lifetime), requests go out
+// with no token until that renewal is due. Callers that need renewal to
+// recover at once should not share a client between goroutines.
 func (c *Client) renewAccessTokenIfDue(ctx context.Context) error {
 	apiKey, due := c.accessTokenDue()
 	if !due {

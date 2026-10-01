@@ -13,9 +13,8 @@ import (
 )
 
 // TestAccessTokenRenewal holds one client past the lifetime of the access token
-// it authenticated with. A sync of a large N-central fleet does exactly that:
-// its per-device assets calls can take longer than the hour an access token
-// lives by default.
+// it authenticated with, as any caller does that keeps a client longer than
+// N-central honours a token.
 func TestAccessTokenRenewal(t *testing.T) {
 	ctx := t.Context()
 
@@ -59,7 +58,8 @@ func TestAccessTokenRenewal(t *testing.T) {
 // TestAccessTokenRenewalFailure revokes the API key while the client holds a
 // token, so the renewal itself is refused. The error has to say so: otherwise
 // the call goes out with no token at all and the caller sees a bare 401 that
-// reads like a permissions problem on that one endpoint.
+// reads like a permissions problem on that one endpoint. Once the key works
+// again, the next call must renew rather than stay refused.
 func TestAccessTokenRenewalFailure(t *testing.T) {
 	ctx := t.Context()
 
@@ -68,11 +68,18 @@ func TestAccessTokenRenewalFailure(t *testing.T) {
 	sim := simulator.New(ctx)
 	defer sim.Close()
 
-	sim.Universe().APIUsers = []*simulator.APIUser{
+	apiUsers := []*simulator.APIUser{
 		{
 			Username:       "admin@example.com",
 			APIKey:         "admin-key-1",
 			AccessTokenTTL: accessTokenTTL,
+		},
+	}
+	sim.Universe().APIUsers = apiUsers
+	sim.Universe().ServiceOrgs = []*ncentralclient.ServiceOrg{
+		{
+			SOID:   "1",
+			SOName: "Service Org 1",
 		},
 	}
 
@@ -87,6 +94,12 @@ func TestAccessTokenRenewalFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "could not renew the access token")
 	assert.ErrorIs(t, err, httperror.ErrStatusUnauthorized)
+
+	sim.Universe().APIUsers = apiUsers // The API key works again.
+
+	serviceOrgs, err := client.GetServiceOrgs(ctx)
+	require.NoError(t, err, "a failed renewal must leave the token due, so the next call renews it")
+	assert.Len(t, serviceOrgs, 1)
 }
 
 // TestSimulatorRefusesExpiredAccessTokens is the control for
@@ -109,12 +122,12 @@ func TestSimulatorRefusesExpiredAccessTokens(t *testing.T) {
 
 func TestDateTimeUnmarshalJSON(t *testing.T) {
 	cases := map[string]time.Time{
-		// No offset: the form N-central uses for most timestamps.
+		// No offset.
 		`"2026-03-23T21:33:26.278"`: time.Date(2026, 3, 23, 21, 33, 26, 278000000, time.UTC),
 		// A numeric offset.
 		`"2026-03-23T17:33:26.278-04:00"`: time.Date(2026, 3, 23, 21, 33, 26, 278000000, time.UTC),
 		// UTC with a trailing Z. One device in this form failed the whole
-		// device list for an N-central integration on every sync.
+		// device list of one N-central integration every day for a month.
 		`"2026-03-23T21:33:26.278Z"`: time.Date(2026, 3, 23, 21, 33, 26, 278000000, time.UTC),
 	}
 	for input, expected := range cases {

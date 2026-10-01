@@ -32,8 +32,7 @@ type APIUser struct {
 	Username string
 	APIKey   string
 	// AccessTokenTTL is how long the access tokens issued to this user are
-	// honoured. Zero means an hour, N-central's default; a real server can be
-	// configured lower.
+	// honoured. Zero means an hour, N-central's default.
 	AccessTokenTTL time.Duration
 	lock           sync.Mutex
 	accessTokens   []APIUserToken
