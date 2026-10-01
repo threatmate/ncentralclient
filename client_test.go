@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tekkamanendless/httperror"
 	"github.com/threatmate/ncentralclient"
 	"github.com/threatmate/ncentralclient/simulator"
 )
@@ -53,6 +54,39 @@ func TestAccessTokenRenewal(t *testing.T) {
 	_, err = client.GetServiceOrgs(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 2, apiUser.IssuedAccessTokens(), "a token that is not yet due must be reused, not renewed on every call")
+}
+
+// TestAccessTokenRenewalFailure revokes the API key while the client holds a
+// token, so the renewal itself is refused. The error has to say so: otherwise
+// the call goes out with no token at all and the caller sees a bare 401 that
+// reads like a permissions problem on that one endpoint.
+func TestAccessTokenRenewalFailure(t *testing.T) {
+	ctx := t.Context()
+
+	const accessTokenTTL = time.Second
+
+	sim := simulator.New(ctx)
+	defer sim.Close()
+
+	sim.Universe().APIUsers = []*simulator.APIUser{
+		{
+			Username:       "admin@example.com",
+			APIKey:         "admin-key-1",
+			AccessTokenTTL: accessTokenTTL,
+		},
+	}
+
+	client := ncentralclient.New(sim.URL())
+	err := client.Authenticate(ctx, "admin-key-1")
+	require.NoError(t, err)
+
+	sim.Universe().APIUsers = nil // The API key is revoked.
+	time.Sleep(accessTokenTTL)
+
+	_, err = client.GetServiceOrgs(ctx)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "could not renew the access token")
+	assert.ErrorIs(t, err, httperror.ErrStatusUnauthorized)
 }
 
 // TestSimulatorRefusesExpiredAccessTokens is the control for

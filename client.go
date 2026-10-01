@@ -2,6 +2,7 @@ package ncentralclient
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -24,6 +25,16 @@ type Client struct {
 	client      *restapiclient.Client
 	lock        sync.Mutex
 	accessToken string
+
+	// apiKey is the user API token that Authenticate exchanged for the access
+	// token. It is kept so the access token can be renewed: N-central honours
+	// an access token for an hour by default (less where the server is set
+	// lower), and a client that outlives it would otherwise be refused on
+	// every call from then on.
+	apiKey string
+	// renewAt is when Do stops presenting the access token and authenticates
+	// again. Zero means the server did not say when the token expires.
+	renewAt time.Time
 }
 
 // New creates a new client for the n-able REST API.
@@ -66,6 +77,11 @@ func (c *Client) HTTPClient() *http.Client {
 
 // Do performs a request to the n-able REST API.
 func (c *Client) Do(ctx context.Context, method string, path string, input any, output any, options ...restapiclient.Option) error {
+	err := c.renewAccessTokenIfDue(ctx)
+	if err != nil {
+		return err
+	}
+
 	var accessToken string
 	c.lock.Lock()
 	accessToken = c.accessToken
@@ -78,4 +94,52 @@ func (c *Client) Do(ctx context.Context, method string, path string, input any, 
 	newOptions = append(newOptions, options...)
 
 	return c.client.Do(ctx, method, path, input, output, newOptions...)
+}
+
+// renewAccessTokenIfDue authenticates again with the API key once the access
+// token is due for renewal.
+//
+// This re-runs the authenticate exchange rather than calling /api/auth/refresh.
+// The API key outlives any access token, and it is the exchange the client
+// already depends on, so renewing needs nothing the first authentication did
+// not. Concurrent callers that find the token due each renew it; every token
+// they are given is valid, so whichever is stored last is used.
+func (c *Client) renewAccessTokenIfDue(ctx context.Context) error {
+	apiKey, due := c.accessTokenDue()
+	if !due {
+		return nil
+	}
+
+	err := c.Authenticate(ctx, apiKey)
+	if err != nil {
+		return fmt.Errorf("could not renew the access token: %w", err)
+	}
+	return nil
+}
+
+// accessTokenDue reports whether the access token is due for renewal, and the
+// API key to renew it with.
+func (c *Client) accessTokenDue() (apiKey string, due bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if c.apiKey == "" || c.renewAt.IsZero() {
+		return "", false
+	}
+	return c.apiKey, !time.Now().Before(c.renewAt)
+}
+
+// renewalTime is when an access token should stop being presented, given when
+// the request that obtained it was sent and the lifetime N-central gave it.
+//
+// The lifetime runs from when the request was sent rather than when the answer
+// arrived, which errs early by the round trip, and a tenth of it (at most a
+// minute) is held back so that a request sent just before the renewal is still
+// honoured when it arrives.
+func renewalTime(requested time.Time, expirySeconds int) time.Time {
+	if expirySeconds <= 0 {
+		return time.Time{}
+	}
+	lifetime := time.Duration(expirySeconds) * time.Second
+	return requested.Add(lifetime - min(lifetime/10, time.Minute))
 }

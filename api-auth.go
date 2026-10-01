@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/threatmate/restapiclient"
 )
@@ -45,7 +46,11 @@ type PostAuthAuthenticateResponseToken struct {
 	ExpirySeconds int    `json:"expirySeconds"`
 }
 
+// Authenticate exchanges the user API token for an access token, which Do then
+// presents on every request and renews before it expires.
 func (c *Client) Authenticate(ctx context.Context, apiKey string) error {
+	requested := time.Now()
+
 	var output PostAuthAuthenticateResponse
 	// Note: Use the raw client directly.
 	err := c.client.Do(ctx, http.MethodPost, "/api/auth/authenticate", nil, &output,
@@ -60,6 +65,8 @@ func (c *Client) Authenticate(ctx context.Context, apiKey string) error {
 
 	c.lock.Lock()
 	c.accessToken = output.Tokens.Access.Token
+	c.apiKey = apiKey
+	c.renewAt = renewalTime(requested, output.Tokens.Access.ExpirySeconds)
 	c.lock.Unlock()
 
 	return nil
