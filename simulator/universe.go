@@ -29,11 +29,15 @@ type Device struct {
 
 // APIUser is a user for the API.
 type APIUser struct {
-	Username      string
-	APIKey        string
-	lock          sync.Mutex
-	accessTokens  []APIUserToken
-	refreshTokens []APIUserToken
+	Username string
+	APIKey   string
+	// AccessTokenTTL is how long the access tokens issued to this user are
+	// honoured. Zero means an hour, N-central's default; a real server can be
+	// configured lower.
+	AccessTokenTTL time.Duration
+	lock           sync.Mutex
+	accessTokens   []APIUserToken
+	refreshTokens  []APIUserToken
 }
 
 // APIUserToken is a token for the API user.
@@ -52,10 +56,14 @@ func (u *APIUser) AuthenticateAPIKey(apiKey string) (output ncentralclient.PostA
 	u.lock.Lock()
 	defer u.lock.Unlock()
 
+	accessTokenTTL := u.AccessTokenTTL
+	if accessTokenTTL == 0 {
+		accessTokenTTL = 1 * time.Hour
+	}
 	accessToken := APIUserToken{
 		Token:     uuid.New().String(),
 		Type:      "Bearer",
-		ExpiresAt: time.Now().Add(1 * time.Hour),
+		ExpiresAt: time.Now().Add(accessTokenTTL),
 	}
 	u.accessTokens = append(u.accessTokens, accessToken)
 
@@ -67,9 +75,11 @@ func (u *APIUser) AuthenticateAPIKey(apiKey string) (output ncentralclient.PostA
 	u.refreshTokens = append(u.refreshTokens, refreshToken)
 
 	output.Tokens.Access = ncentralclient.PostAuthAuthenticateResponseToken{
-		Token:         accessToken.Token,
-		Type:          accessToken.Type,
-		ExpirySeconds: int(time.Until(accessToken.ExpiresAt).Seconds()),
+		Token: accessToken.Token,
+		Type:  accessToken.Type,
+		// The lifetime as configured, like N-central's 3600: counting down to
+		// ExpiresAt instead truncates a moment later, to 0 for a 1s lifetime.
+		ExpirySeconds: int(accessTokenTTL / time.Second),
 	}
 	output.Tokens.Refresh = ncentralclient.PostAuthAuthenticateResponseToken{
 		Token:         refreshToken.Token,
@@ -77,6 +87,14 @@ func (u *APIUser) AuthenticateAPIKey(apiKey string) (output ncentralclient.PostA
 		ExpirySeconds: int(time.Until(refreshToken.ExpiresAt).Seconds()),
 	}
 	return output, nil
+}
+
+// IssuedAccessTokens is how many access tokens this user has been issued.
+func (u *APIUser) IssuedAccessTokens() int {
+	u.lock.Lock()
+	defer u.lock.Unlock()
+
+	return len(u.accessTokens)
 }
 
 // CheckAccessToken checks if the access token is valid.
