@@ -32,6 +32,10 @@ type GenericPage[T any] struct {
 var DateTimeFormats = []string{
 	"2006-01-02T15:04:05.999",
 	"2006-01-02T15:04:05.999-07:00",
+	// UTC with a trailing "Z", which "-07:00" does not accept. N-central sends
+	// some device timestamps this way, and one such device fails the whole
+	// device list.
+	"2006-01-02T15:04:05.999Z07:00",
 }
 
 type DateTime time.Time
