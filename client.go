@@ -34,6 +34,8 @@ type Client struct {
 	// renewAt is when Do stops presenting the access token and authenticates
 	// again. Zero means the server did not say when the token expires.
 	renewAt time.Time
+	// renewLock lets one caller renew a due token while the others wait for it.
+	renewLock sync.Mutex
 }
 
 // New creates a new client for the n-able REST API.
@@ -102,13 +104,22 @@ func (c *Client) Do(ctx context.Context, method string, path string, input any, 
 // so renewing needs nothing the first authentication did not: the same API key
 // and the same exchange.
 //
-// Renewals are not serialized. Callers that find the token due at the same
-// moment each renew it, and the last to finish wins, failure included: a
-// failed renewal clears the token, and if it finishes after one that succeeded
-// (which moved the next renewal out by the token's lifetime), requests go out
-// with no token until that renewal is due. Callers that need renewal to
-// recover at once should not share a client between goroutines.
+// One caller renews at a time, and the others wait and then use what it
+// stored. Renewing once per caller instead would let a failed renewal that
+// finished last clear the token a successful one had just stored, while its
+// renewal time stayed an hour out, so every request would go out with no token
+// until then. A failed renewal leaves the token due, so the next call renews
+// again.
 func (c *Client) renewAccessTokenIfDue(ctx context.Context) error {
+	_, due := c.accessTokenDue()
+	if !due {
+		return nil
+	}
+
+	c.renewLock.Lock()
+	defer c.renewLock.Unlock()
+
+	// Another caller may have renewed it while this one waited.
 	apiKey, due := c.accessTokenDue()
 	if !due {
 		return nil
