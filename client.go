@@ -119,13 +119,21 @@ func (c *Client) renewAccessTokenIfDue(ctx context.Context) error {
 	c.renewLock.Lock()
 	defer c.renewLock.Unlock()
 
+	// A renewal that failed slowly leaves the token due for every caller that
+	// waited behind it, so without this they would renew one after another,
+	// each as slowly, long after their callers stopped waiting.
+	err := ctx.Err()
+	if err != nil {
+		return fmt.Errorf("could not renew the access token: %w", err)
+	}
+
 	// Another caller may have renewed it while this one waited.
 	apiKey, due := c.accessTokenDue()
 	if !due {
 		return nil
 	}
 
-	err := c.Authenticate(ctx, apiKey)
+	err = c.Authenticate(ctx, apiKey)
 	if err != nil {
 		return fmt.Errorf("could not renew the access token: %w", err)
 	}
