@@ -59,6 +59,17 @@ func TestSimulator(t *testing.T) {
 		},
 	}
 
+	sim.Universe().ServerInfo = &ncentralclient.ServerInfo{
+		NCentral: "2026.4.1.26",
+		Version:  "1.3.23",
+	}
+
+	t.Run("server-info without a token", func(t *testing.T) {
+		client := ncentralclient.New(sim.URL())
+
+		_, err := client.GetServerInfo(ctx)
+		require.ErrorIs(t, err, httperror.ErrStatusUnauthorized)
+	})
 	t.Run("auth", func(t *testing.T) {
 		client := ncentralclient.New(sim.URL())
 
@@ -103,6 +114,12 @@ func TestSimulator(t *testing.T) {
 					}
 				})
 			}
+		})
+		t.Run("server-info", func(t *testing.T) {
+			info, err := client.GetServerInfo(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "2026.4.1.26", info.NCentral)
+			assert.Equal(t, "1.3.23", info.Version)
 		})
 		t.Run("customers", func(t *testing.T) {
 			customers, err := client.GetCustomers(ctx)

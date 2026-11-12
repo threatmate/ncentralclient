@@ -152,3 +152,16 @@ func (a *API) GetOrgUnitsIDUsers(ctx context.Context, meta GetOrgUnitsIDUsersMet
 	output.PageSize = len(output.Data)
 	return output, nil
 }
+
+type GetServerInfoMetadata struct {
+	restfulwrapper.HTTPMethodGET
+	requireAuthentication
+	_ string `api:"httppath:/server-info"`
+}
+
+func (a *API) GetServerInfo(ctx context.Context, meta GetServerInfoMetadata) (output ncentralclient.ServerInfo, err error) {
+	if a.universe.ServerInfo == nil {
+		return output, &APIError{code: http.StatusNotFound, message: "NOT FOUND"}
+	}
+	return *a.universe.ServerInfo, nil
+}
