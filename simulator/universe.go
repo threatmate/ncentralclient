@@ -15,6 +15,9 @@ type Universe struct {
 	OrgUnits    []*OrgUnit
 	Customers   []*ncentralclient.Customer
 	Devices     []*Device
+	// ServerInfo is what /api/server-info answers; nil answers 404, as a server
+	// that predates the route would.
+	ServerInfo *ncentralclient.ServerInfo
 }
 
 type OrgUnit struct {
